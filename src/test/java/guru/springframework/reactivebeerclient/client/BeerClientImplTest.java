@@ -7,12 +7,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BeerClientImplTest {
 
@@ -131,4 +135,70 @@ class BeerClientImplTest {
         assertThat(beerDto.getUpc()).isEqualTo(UPC);
         System.out.println(beerDto);
     }
+    @Test
+    void deleteBeerByIdNotFound() {
+        Mono<ResponseEntity<Void>> responseEntityMono = beerClient.deleteBeerById(UUID.randomUUID());
+
+        assertThrows(WebClientResponseException.class, () -> {
+            ResponseEntity<Void> responseEntity = responseEntityMono.block();
+            assertThat(responseEntity.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        });
+
+    }
+    @Test
+    void testDeleteBeerHandleException() {
+        Mono<ResponseEntity<Void>> responseEntityMono = beerClient.deleteBeerById(UUID.randomUUID());
+
+        ResponseEntity<Void> responseEntity = responseEntityMono.onErrorResume(throwable -> {
+            if(throwable instanceof WebClientResponseException){
+                WebClientResponseException exception = (WebClientResponseException) throwable;
+                return Mono.just(ResponseEntity.status(exception.getStatusCode()).build());
+            } else {
+                throw new RuntimeException(throwable);
+            }
+        }).block();
+
+        assertThat(responseEntity.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    ///////////////////////////////////Functional style//////////////////////////////////////////
+
+
+
+    @Test
+    void getBeerByIdFunctionalStyle() throws InterruptedException {
+
+        AtomicReference beerName= new AtomicReference();
+        CountDownLatch countDownLatch= new CountDownLatch(1);
+        beerClient.listBeers(null, null, null, null, null)
+                .map(beerPageList->beerPageList.getContent().get(0).getId())
+                .map(beerId->beerClient.getBeerById(beerId,false))
+                .flatMap(mono-> mono)
+                .subscribe(beerDto -> {
+                    System.out.println(beerDto.getBeerName());
+                    beerName.set(beerDto.getBeerName());
+                    assertThat(beerDto.getBeerName()).isEqualTo("Mango Bobs");
+                    countDownLatch.countDown();  // Dont mobe up this line before 2nd line. it will work so fast it will get completed
+                    //before beerName is set
+
+                });
+
+             //   Thread.sleep(1000);
+        countDownLatch.await();
+        assertThat(beerName.get()).isEqualTo("Mango Bobs");
+        /*Mono<BeerPagedList> beerPagedListMono = beerClient.listBeers(1, 1, null, null, null);
+        BeerPagedList beerPagedList = beerPagedListMono.block();
+        UUID beerId = beerPagedList.getContent().get(0).getId();
+        Mono<BeerDto> beerById = beerClient.getBeerById(beerId, false);
+        BeerDto beerDto = beerById.block();
+        assertThat(beerDto).isNotNull();
+        assertThat(beerDto.getId()).isEqualTo(beerId);
+        System.out.println(beerDto);*/
+    }
+
+
+
+
+
+
 }
